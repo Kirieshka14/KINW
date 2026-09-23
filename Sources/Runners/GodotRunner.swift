@@ -519,8 +519,11 @@ public final class GodotViewController: UIViewController, WKScriptMessageHandler
                     statusError.innerText = (err && err.message) ? err.message : String(err);
                 }
 
+                const canvasEl = document.getElementById('canvas');
+
                 const GODOT_CONFIG = {
-                    args: [],
+                    args: ["--rendering-driver", "opengl3"],
+                    canvas: canvasEl,
                     canvasResizePolicy: 2,
                     executable: "godot",
                     experimentalVK: false,
@@ -687,7 +690,7 @@ public final class GodotViewController: UIViewController, WKScriptMessageHandler
         var matchedURL: URL?
 
         // 1. Check if it is a Godot runtime file
-        let runtimeFiles = ["godot.js", "godot.wasm", "godot.audio.worklet.js"]
+        let runtimeFiles = ["godot.js", "godot.wasm", "godot.audio.worklet.js", "godot.audio.position.worklet.js"]
         if runtimeFiles.contains(cleanPath) || cleanPath.hasSuffix(".wasm") {
             let lookupName = cleanPath.hasSuffix(".wasm") ? "godot.wasm" : cleanPath
             matchedURL = findGodotRuntimeFile(named: lookupName)
