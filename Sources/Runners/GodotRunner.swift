@@ -51,6 +51,7 @@ public final class GodotViewController: UIViewController, WKScriptMessageHandler
     public private(set) var capturedLogs: [String] = []
 
     private var extractOverlay: UIView?
+    private var extractTitleLabel: UILabel?
     private var extractProgressBar: UIProgressView?
     private var extractStatusLabel: UILabel?
 
@@ -202,19 +203,60 @@ public final class GodotViewController: UIViewController, WKScriptMessageHandler
     private func checkAndStartGame() {
         let bottleDir = BottleManager.shared.bottleDirectory(for: bottle.id)
 
-        // 1. Check if .pck exists
+        // 1. Check if a valid, ready-to-run monolithic .pck exists
         if let pck = findPCK(in: bottleDir) {
             self.activePCKPath = pck
             loadGodotRuntime(pckRelativePath: pck)
             return
         }
 
-        // 2. If no .pck, check if there are nested split APKs to unpack
+        // 2. Check if we need to build a monolithic game.pck from loose assets or sparse pck
+        let hasLooseConfig = FileManager.default.fileExists(atPath: bottleDir.appendingPathComponent("assets/project.binary").path)
+            || FileManager.default.fileExists(atPath: bottleDir.appendingPathComponent("project.binary").path)
+            || FileManager.default.fileExists(atPath: bottleDir.appendingPathComponent("assets/project.godot").path)
+            || FileManager.default.fileExists(atPath: bottleDir.appendingPathComponent("project.godot").path)
+            || FileManager.default.fileExists(atPath: bottleDir.appendingPathComponent("assets/assets.sparsepck").path)
+            || FileManager.default.fileExists(atPath: bottleDir.appendingPathComponent("assets.sparsepck").path)
+
+        if hasLooseConfig {
+            showExtractingUI(title: "Optimizing Game Data", status: "Building monolithic package for Godot 4 Web...")
+            Task {
+                let gamePCK = bottleDir.appendingPathComponent("game.pck")
+                do {
+                    let success = try await Task.detached(priority: .userInitiated) { [weak self] () -> Bool in
+                        return try GodotPCKBuilder.buildPCK(from: bottleDir, outputPCKURL: gamePCK) { status, progress in
+                            DispatchQueue.main.async {
+                                self?.extractStatusLabel?.text = status
+                                self?.extractProgressBar?.setProgress(progress, animated: true)
+                            }
+                        }
+                    }.value
+
+                    await MainActor.run {
+                        self.hideExtractingUI()
+                        if success && FileManager.default.fileExists(atPath: gamePCK.path) {
+                            self.activePCKPath = "game.pck"
+                            self.loadGodotRuntime(pckRelativePath: "game.pck")
+                        } else {
+                            self.showError("Failed to assemble Godot game package.")
+                        }
+                    }
+                } catch {
+                    await MainActor.run {
+                        self.hideExtractingUI()
+                        self.showError("Packaging error: \(error.localizedDescription)")
+                    }
+                }
+            }
+            return
+        }
+
+        // 3. If no .pck and no loose assets, check if there are nested split APKs to unpack
         let contents = (try? FileManager.default.contentsOfDirectory(at: bottleDir, includingPropertiesForKeys: nil)) ?? []
         let apks = contents.filter { $0.pathExtension.lowercased() == "apk" }
 
         if !apks.isEmpty {
-            showExtractingUI()
+            showExtractingUI(title: "Unpacking Game Data", status: "Extracting multi-part Play Asset Delivery package...")
             Task {
                 await BottleManager.shared.unpackNestedAPKs(in: bottleDir) { [weak self] status, progress in
                     DispatchQueue.main.async {
@@ -225,17 +267,14 @@ public final class GodotViewController: UIViewController, WKScriptMessageHandler
 
                 await MainActor.run {
                     self.hideExtractingUI()
-                    if let found = self.findPCK(in: bottleDir) {
-                        self.activePCKPath = found
-                        self.loadGodotRuntime(pckRelativePath: found)
-                    } else {
-                        self.showError("Extracted game pack, but no Godot .pck file was found.")
-                    }
+                    // Re-run checkAndStartGame now that APKs have been extracted!
+                    self.checkAndStartGame()
                 }
             }
-        } else {
-            showError("No Godot .pck archive found in bottle.")
+            return
         }
+
+        showError("No Godot .pck archive or game assets found in bottle.")
     }
 
     private func findGodotRuntimeFile(named name: String) -> URL? {
@@ -263,6 +302,12 @@ public final class GodotViewController: UIViewController, WKScriptMessageHandler
     }
 
     private func findPCK(in root: URL) -> String? {
+        // 1. Direct monolithic game.pck takes highest priority
+        let gamePCK = root.appendingPathComponent("game.pck")
+        if FileManager.default.fileExists(atPath: gamePCK.path) && isGodotPCK(url: gamePCK) {
+            return "game.pck"
+        }
+
         let fileManager = FileManager.default
         guard let enumerator = fileManager.enumerator(at: root, includingPropertiesForKeys: [.fileSizeKey]) else { return nil }
 
@@ -271,7 +316,18 @@ public final class GodotViewController: UIViewController, WKScriptMessageHandler
         for case let fileURL as URL in enumerator {
             guard !fileURL.hasDirectoryPath else { continue }
             let ext = fileURL.pathExtension.lowercased()
+            let fileName = fileURL.lastPathComponent.lowercased()
+
+            // Skip sparse packs - they are not standalone
+            if ext == "sparsepck" || fileName.contains("sparse") {
+                continue
+            }
+
             if ext == "pck" || isGodotPCK(url: fileURL) {
+                // Ensure it's not a sparse PCK
+                if isSparsePCK(url: fileURL) {
+                    continue
+                }
                 let size = (try? fileURL.resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? 0
                 candidates.append((url: fileURL, size: Int64(size)))
             }
@@ -293,7 +349,24 @@ public final class GodotViewController: UIViewController, WKScriptMessageHandler
         return header == Data([0x47, 0x44, 0x50, 0x43]) // "GDPC"
     }
 
-    private func showExtractingUI() {
+    private func isSparsePCK(url: URL) -> Bool {
+        guard let handle = try? FileHandle(forReadingFrom: url) else { return false }
+        defer { try? handle.close() }
+        let header = handle.readData(ofLength: 24)
+        if header.count >= 24 && header.prefix(4) == Data([0x47, 0x44, 0x50, 0x43]) {
+            let flags = header.subdata(in: 20..<24).withUnsafeBytes { $0.load(as: UInt32.self) }
+            return (flags & 0x04) != 0
+        }
+        return false
+    }
+
+    private func showExtractingUI(title textTitle: String = "Unpacking Game Data", status textStatus: String = "Extracting multi-part Play Asset Delivery package...") {
+        if let _ = self.extractOverlay {
+            self.extractTitleLabel?.text = textTitle
+            self.extractStatusLabel?.text = textStatus
+            return
+        }
+
         let overlay = UIView(frame: view.bounds)
         overlay.backgroundColor = UIColor(red: 0.07, green: 0.08, blue: 0.11, alpha: 1.0)
         overlay.autoresizingMask = [.flexibleWidth, .flexibleHeight]
@@ -309,12 +382,13 @@ public final class GodotViewController: UIViewController, WKScriptMessageHandler
         icon.font = .systemFont(ofSize: 56)
 
         let title = UILabel()
-        title.text = "Unpacking Game Data"
+        title.text = textTitle
         title.font = .systemFont(ofSize: 20, weight: .bold)
         title.textColor = .white
+        self.extractTitleLabel = title
 
         let status = UILabel()
-        status.text = "Extracting multi-part Play Asset Delivery package..."
+        status.text = textStatus
         status.font = .systemFont(ofSize: 13)
         status.textColor = .lightGray
         status.textAlignment = .center
@@ -352,10 +426,18 @@ public final class GodotViewController: UIViewController, WKScriptMessageHandler
         }) { _ in
             self.extractOverlay?.removeFromSuperview()
             self.extractOverlay = nil
+            self.extractTitleLabel = nil
+            self.extractStatusLabel = nil
+            self.extractProgressBar = nil
         }
     }
 
     private func prepareGodotPCK(pckRelativePath: String, in bottleDir: URL) -> [String] {
+        if pckRelativePath == "game.pck" {
+            // Monolithic pack contains all assets internally; no MEMFS preloading needed
+            return []
+        }
+
         let pckURL = bottleDir.appendingPathComponent(pckRelativePath)
         guard FileManager.default.fileExists(atPath: pckURL.path) else { return [] }
 
