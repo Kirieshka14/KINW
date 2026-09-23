@@ -830,7 +830,7 @@ public final class GodotViewController: UIViewController, WKScriptMessageHandler
                     try handle.seek(toOffset: UInt64(rangeStart))
                 } catch {
                     if self.isTaskActive(urlSchemeTask) {
-                        urlSchemeTask.didFailWithError(URLError(.cannotReadFile))
+                        urlSchemeTask.didFailWithError(URLError(.cannotOpenFile))
                     }
                     self.markTaskFinished(urlSchemeTask)
                     return
@@ -868,7 +868,7 @@ public final class GodotViewController: UIViewController, WKScriptMessageHandler
             guard self.isTaskActive(urlSchemeTask) else { return }
 
             if hasError {
-                urlSchemeTask.didFailWithError(URLError(.cannotReadFile))
+                urlSchemeTask.didFailWithError(URLError(.cannotDecodeRawData))
             } else {
                 urlSchemeTask.didFinish()
             }
