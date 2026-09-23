@@ -199,7 +199,23 @@ public final class GodotViewController: UIViewController, WKScriptMessageHandler
                 return fileURL.relativePath(from: root)
             }
         }
+
+        // Secondary check: look for Godot GDPC magic header
+        if let enumerator2 = fileManager.enumerator(at: root, includingPropertiesForKeys: nil) {
+            for case let fileURL as URL in enumerator2 {
+                if !fileURL.hasDirectoryPath && isGodotPCK(url: fileURL) {
+                    return fileURL.relativePath(from: root)
+                }
+            }
+        }
         return nil
+    }
+
+    private func isGodotPCK(url: URL) -> Bool {
+        guard let handle = try? FileHandle(forReadingFrom: url) else { return false }
+        defer { try? handle.close() }
+        let header = handle.readData(ofLength: 4)
+        return header == Data([0x47, 0x44, 0x50, 0x43]) // "GDPC"
     }
 
     private func showExtractingUI() {

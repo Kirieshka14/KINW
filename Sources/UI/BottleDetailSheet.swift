@@ -12,6 +12,7 @@ public struct BottleDetailSheet: View {
     @State private var isLoadingFiles = true
     @State private var isExtractingSplit = false
     @State private var extractProgressText = ""
+    @State private var showingDeleteAlert = false
 
     private var hasNestedAPKs: Bool {
         fileNodes.contains(where: { $0.name.hasSuffix(".apk") })
@@ -240,6 +241,34 @@ public struct BottleDetailSheet: View {
                             .shadow(color: Color.blue.opacity(0.4), radius: 10, x: 0, y: 5)
                         }
                         .padding(.top, 8)
+
+                        // Delete Bottle & Free Storage
+                        Button(role: .destructive, action: { showingDeleteAlert = true }) {
+                            HStack(spacing: 8) {
+                                Image(systemName: "trash.fill")
+                                Text("Delete Bottle & Free Storage")
+                            }
+                            .font(.system(size: 15, weight: .bold))
+                            .foregroundColor(.red)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 14)
+                            .background(Color.red.opacity(0.12))
+                            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                                    .stroke(Color.red.opacity(0.25), lineWidth: 1)
+                            )
+                        }
+                        .padding(.top, 4)
+                        .alert("Delete Bottle?", isPresented: $showingDeleteAlert) {
+                            Button("Cancel", role: .cancel) {}
+                            Button("Delete", role: .destructive) {
+                                BottleManager.shared.deleteBottle(bottle)
+                                dismiss()
+                            }
+                        } message: {
+                            Text("This will permanently delete '\(bottle.title)', its saves, and free up storage on your device.")
+                        }
                     }
                     .padding(16)
                 }

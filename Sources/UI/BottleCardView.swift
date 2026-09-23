@@ -6,6 +6,7 @@ public struct BottleCardView: View {
     public let onDelete: () -> Void
 
     @State private var showingDetails: Bool = false
+    @State private var showingDeleteConfirmation: Bool = false
 
     private var iconImage: UIImage? {
         if let iconURL = BottleManager.shared.iconURL(for: bottle.id),
@@ -81,6 +82,21 @@ public struct BottleCardView: View {
                 }
 
                 Spacer()
+
+                Button(action: { showingDeleteConfirmation = true }) {
+                    Image(systemName: "trash")
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundColor(.red.opacity(0.85))
+                        .padding(8)
+                        .background(Color.red.opacity(0.12))
+                        .clipShape(Circle())
+                }
+                .alert("Delete Bottle?", isPresented: $showingDeleteConfirmation) {
+                    Button("Cancel", role: .cancel) {}
+                    Button("Delete", role: .destructive, action: onDelete)
+                } message: {
+                    Text("Permanently delete '\(bottle.title)' and free up storage?")
+                }
 
                 Button(action: { showingDetails = true }) {
                     Image(systemName: "slider.horizontal.3")

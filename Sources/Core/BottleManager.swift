@@ -128,9 +128,16 @@ public final class BottleManager: ObservableObject {
             let baseProg = Float(idx) / Float(apks.count)
             onProgress?("Extracting \(name)...", baseProg)
             print("[KINW-SplitAPK] Extracting: \(name)")
-            try? await APKExtractor.shared.extract(apkURL: apk, to: bottleDir) { p in
-                let current = baseProg + (p / Float(apks.count))
-                onProgress?("Extracting \(name)...", current)
+            do {
+                try await APKExtractor.shared.extract(apkURL: apk, to: bottleDir) { p in
+                    let current = baseProg + (p / Float(apks.count))
+                    onProgress?("Extracting \(name)...", current)
+                }
+                // Automatically delete extracted split APK container to free up device storage!
+                try? fileManager.removeItem(at: apk)
+                print("[KINW-SplitAPK] Removed temporary APK: \(name)")
+            } catch {
+                print("[KINW-SplitAPK] Error extracting \(name): \(error)")
             }
         }
 

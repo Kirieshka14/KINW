@@ -69,6 +69,98 @@ static void make_dirs_for_path(const char* path) {
     }
 }
 
+#define CHUNK_SIZE (256 * 1024)
+
+static int stream_extract_entry(FILE* in_fp, uint32_t comp_size, uint32_t uncomp_size, uint16_t method, const char* out_path) {
+    (void)uncomp_size;
+    FILE* out_fp = fopen(out_path, "wb");
+    if (!out_fp) return -1;
+
+    uint8_t* in_buf = (uint8_t*)malloc(CHUNK_SIZE);
+    uint8_t* out_buf = (uint8_t*)malloc(CHUNK_SIZE);
+    if (!in_buf || !out_buf) {
+        if (in_buf) free(in_buf);
+        if (out_buf) free(out_buf);
+        fclose(out_fp);
+        return -2;
+    }
+
+    int result = 0;
+
+    if (method == 0) { // Stored (uncompressed)
+        uint32_t remaining = comp_size;
+        while (remaining > 0) {
+            size_t to_read = remaining < CHUNK_SIZE ? remaining : CHUNK_SIZE;
+            size_t bytes_read = fread(in_buf, 1, to_read, in_fp);
+            if (bytes_read == 0) {
+                result = -3;
+                break;
+            }
+            fwrite(in_buf, 1, bytes_read, out_fp);
+            remaining -= (uint32_t)bytes_read;
+        }
+    } else if (method == 8) { // Deflated
+        z_stream strm;
+        memset(&strm, 0, sizeof(strm));
+        strm.zalloc = Z_NULL;
+        strm.zfree = Z_NULL;
+        strm.opaque = Z_NULL;
+        strm.avail_in = 0;
+        strm.next_in = Z_NULL;
+
+        if (inflateInit2(&strm, -MAX_WBITS) != Z_OK) {
+            free(in_buf);
+            free(out_buf);
+            fclose(out_fp);
+            return -4;
+        }
+
+        uint32_t comp_remaining = comp_size;
+        int ret = Z_OK;
+
+        while (ret != Z_STREAM_END) {
+            if (strm.avail_in == 0 && comp_remaining > 0) {
+                size_t to_read = comp_remaining < CHUNK_SIZE ? comp_remaining : CHUNK_SIZE;
+                size_t bytes_read = fread(in_buf, 1, to_read, in_fp);
+                if (bytes_read == 0) {
+                    result = -5; // Unexpected EOF
+                    break;
+                }
+                strm.next_in = in_buf;
+                strm.avail_in = (uInt)bytes_read;
+                comp_remaining -= (uint32_t)bytes_read;
+            }
+
+            strm.next_out = out_buf;
+            strm.avail_out = CHUNK_SIZE;
+
+            ret = inflate(&strm, Z_NO_FLUSH);
+            if (ret != Z_OK && ret != Z_STREAM_END && ret != Z_BUF_ERROR) {
+                result = -6; // Decompression error
+                break;
+            }
+
+            size_t have = CHUNK_SIZE - strm.avail_out;
+            if (have > 0) {
+                fwrite(out_buf, 1, have, out_fp);
+            }
+
+            if (ret == Z_BUF_ERROR && comp_remaining == 0 && strm.avail_in == 0) {
+                break;
+            }
+        }
+
+        inflateEnd(&strm);
+    } else {
+        result = -7; // Unsupported method
+    }
+
+    free(in_buf);
+    free(out_buf);
+    fclose(out_fp);
+    return result;
+}
+
 static int decompress_buffer(const uint8_t* in_buf, size_t in_size, uint8_t* out_buf, size_t out_size, uint16_t method) {
     if (method == 0) { // Stored
         size_t copy_sz = in_size < out_size ? in_size : out_size;
@@ -175,30 +267,12 @@ int kinw_zip_extract(const char* zip_path, const char* dest_dir, kinw_zip_progre
 
         make_dirs_for_path(dest_path);
 
-        // Read local header
+        // Read local header and stream extract without whole-file memory allocation
         fseek(fp, cd.local_header_offset, SEEK_SET);
         struct ZipLocalHeader lh;
         if (fread(&lh, 1, sizeof(lh), fp) == sizeof(lh) && lh.signature == 0x04034b50) {
             fseek(fp, lh.filename_len + lh.extra_len, SEEK_CUR);
-
-            uint8_t* comp_data = (uint8_t*)malloc(cd.comp_size > 0 ? cd.comp_size : 1);
-            uint8_t* uncomp_data = (uint8_t*)malloc(cd.uncomp_size > 0 ? cd.uncomp_size : 1);
-
-            if (comp_data && uncomp_data) {
-                if (cd.comp_size == 0 || fread(comp_data, 1, cd.comp_size, fp) == cd.comp_size) {
-                    if (decompress_buffer(comp_data, cd.comp_size, uncomp_data, cd.uncomp_size, cd.method) == 0) {
-                        FILE* out_fp = fopen(dest_path, "wb");
-                        if (out_fp) {
-                            if (cd.uncomp_size > 0) {
-                                fwrite(uncomp_data, 1, cd.uncomp_size, out_fp);
-                            }
-                            fclose(out_fp);
-                        }
-                    }
-                }
-            }
-            free(comp_data);
-            free(uncomp_data);
+            stream_extract_entry(fp, cd.comp_size, cd.uncomp_size, cd.method, dest_path);
         }
 
         fseek(fp, next_cd, SEEK_SET);

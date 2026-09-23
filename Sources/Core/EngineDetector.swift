@@ -120,7 +120,19 @@ public final class EngineDetector {
                 entryPoint: pckFile,
                 details: "Detected Godot PCK archive (\(pckFile))"
             )
-        } else if let godotSo = allFiles.first(where: { $0.lowercased().contains("libgodot_android.so") }) {
+        }
+        // Check for Godot PCK by magic bytes GDPC in case archive is named without .pck extension
+        for file in allFiles {
+            let fullURL = directory.appendingPathComponent(file)
+            if isGodotPCKFile(at: fullURL) {
+                return EngineDetectionResult(
+                    engine: .godot,
+                    entryPoint: file,
+                    details: "Detected Godot PCK archive by GDPC header (\(file))"
+                )
+            }
+        }
+        if let godotSo = allFiles.first(where: { $0.lowercased().contains("libgodot_android.so") }) {
             return EngineDetectionResult(
                 engine: .godot,
                 entryPoint: godotSo,
@@ -182,10 +194,18 @@ public final class EngineDetector {
             )
         }
 
+        let nonApkFiles = allFiles.filter { !$0.lowercased().hasSuffix(".apk") }
         return EngineDetectionResult(
             engine: .unknown,
-            entryPoint: allFiles.first ?? "",
+            entryPoint: nonApkFiles.first ?? "",
             details: "No recognized engine signature found"
         )
+    }
+
+    private func isGodotPCKFile(at url: URL) -> Bool {
+        guard let handle = try? FileHandle(forReadingFrom: url) else { return false }
+        defer { try? handle.close() }
+        let header = handle.readData(ofLength: 4)
+        return header == Data([0x47, 0x44, 0x50, 0x43]) // "GDPC"
     }
 }
