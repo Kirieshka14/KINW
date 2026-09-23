@@ -104,6 +104,39 @@ public final class BottleManager: ObservableObject {
         }
     }
 
+    /// Automatically unpacks all nested split APKs (e.g. assetPackInstallTime-*.apk, base.apk, config.*.apk)
+    public func unpackNestedAPKs(in bottleDir: URL, onProgress: ((String, Float) -> Void)? = nil) async -> Bool {
+        guard let contents = try? fileManager.contentsOfDirectory(at: bottleDir, includingPropertiesForKeys: nil) else {
+            return false
+        }
+
+        let apks = contents.filter { $0.pathExtension.lowercased() == "apk" }
+            .sorted { a, b in
+                let an = a.lastPathComponent.lowercased()
+                let bn = b.lastPathComponent.lowercased()
+                if an.contains("assetpack") { return true }
+                if bn.contains("assetpack") { return false }
+                if an.contains("base") { return true }
+                if bn.contains("base") { return false }
+                return an < bn
+            }
+
+        guard !apks.isEmpty else { return false }
+
+        for (idx, apk) in apks.enumerated() {
+            let name = apk.lastPathComponent
+            let baseProg = Float(idx) / Float(apks.count)
+            onProgress?("Extracting \(name)...", baseProg)
+            print("[KINW-SplitAPK] Extracting: \(name)")
+            try? await APKExtractor.shared.extract(apkURL: apk, to: bottleDir) { p in
+                let current = baseProg + (p / Float(apks.count))
+                onProgress?("Extracting \(name)...", current)
+            }
+        }
+
+        return true
+    }
+
     public func createBottle(from apkURL: URL) async throws -> Bottle {
         DispatchQueue.main.async {
             self.isImporting = true
@@ -123,12 +156,20 @@ public final class BottleManager: ObservableObject {
         }
 
         try await APKExtractor.shared.extract(apkURL: apkURL, to: bottleDir) { progress in
-            self.importProgress = 0.15 + (progress * 0.70)
+            self.importProgress = 0.15 + (progress * 0.40)
+        }
+
+        // Auto-extract any nested Split APK packages
+        let hadSplits = await unpackNestedAPKs(in: bottleDir) { status, prog in
+            DispatchQueue.main.async {
+                self.importProgress = 0.55 + (prog * 0.35)
+                self.importStatusText = status
+            }
         }
 
         DispatchQueue.main.async {
-            self.importProgress = 0.90
-            self.importStatusText = "Detecting game engine..."
+            self.importProgress = 0.92
+            self.importStatusText = hadSplits ? "Game packs extracted! Detecting engine..." : "Detecting game engine..."
         }
 
         let detection = EngineDetector.shared.detect(in: bottleDir)
@@ -142,9 +183,12 @@ public final class BottleManager: ObservableObject {
         var config = BottleConfig()
         config.orientation = metadata.screenOrientation.lowercased().contains("portrait") ? "portrait" : "landscape"
 
+        // Generate clean display title if metadata title is just the raw package name or resource ID
+        let displayTitle = BottleManager.formatCleanTitle(label: metadata.appLabel, packageName: metadata.packageName)
+
         let bottle = Bottle(
             id: bottleId,
-            title: metadata.appLabel,
+            title: displayTitle,
             packageName: metadata.packageName,
             version: metadata.versionName.isEmpty ? "1.0" : metadata.versionName,
             engine: detection.engine,
@@ -164,6 +208,59 @@ public final class BottleManager: ObservableObject {
         }
 
         return bottle
+    }
+
+    public static func formatCleanTitle(label: String, packageName: String) -> String {
+        var title = label.trimmingCharacters(in: .whitespacesAndNewlines)
+        if title.isEmpty || title == packageName || title.starts(with: "@") {
+            let lastPart = packageName.split(separator: ".").last.map(String.init) ?? packageName
+            var formatted = lastPart.replacingOccurrences(of: "_", with: " ").replacingOccurrences(of: "-", with: " ")
+            formatted = formatted.replacingOccurrences(of: "([a-z])([A-Z])", with: "$1 $2", options: .regularExpression)
+            if formatted.lowercased() == "interdimensionalvendingmachine" {
+                return "Interdimensional Vending Machine"
+            }
+            title = formatted.capitalized
+        }
+        return title
+    }
+
+    public func updateBottle(_ updated: Bottle) {
+        if let idx = bottles.firstIndex(where: { $0.id == updated.id }) {
+            bottles[idx] = updated
+            saveIndex()
+        }
+    }
+
+    /// Automatically prepares a bottle: unpacks nested split APKs if any, detects engine, updates entryPoint and saves.
+    public func prepareBottleIfNeeded(bottleId: String, onProgress: ((String, Float) -> Void)? = nil) async -> Bottle? {
+        guard let idx = bottles.firstIndex(where: { $0.id == bottleId }) else { return nil }
+        var currentBottle = bottles[idx]
+        let dir = bottleDirectory(for: bottleId)
+
+        let contents = (try? fileManager.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil)) ?? []
+        let apks = contents.filter { $0.pathExtension.lowercased() == "apk" }
+
+        if !apks.isEmpty {
+            _ = await unpackNestedAPKs(in: dir, onProgress: onProgress)
+        }
+
+        let detection = EngineDetector.shared.detect(in: dir)
+        if detection.engine != .unknown {
+            currentBottle.engine = detection.engine
+            if !detection.entryPoint.isEmpty {
+                currentBottle.entryPoint = detection.entryPoint
+            }
+        }
+
+        currentBottle.title = BottleManager.formatCleanTitle(label: currentBottle.title, packageName: currentBottle.packageName)
+
+        await MainActor.run {
+            if let latestIdx = self.bottles.firstIndex(where: { $0.id == bottleId }) {
+                self.bottles[latestIdx] = currentBottle
+                self.saveIndex()
+            }
+        }
+        return currentBottle
     }
 
     public func deleteBottle(_ bottle: Bottle) {

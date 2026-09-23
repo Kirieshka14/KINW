@@ -65,8 +65,9 @@
 | **HTML5 / Web Novels** | `assets/www/index.html`, `assets/index.html` | ✅ **Active (Metal)** |
 | **Tyranobuilder** | `assets/www/data/scenario/` | ✅ **Active** |
 | **RPG Maker MV / MZ** | `assets/www/data/System.json` | ✅ **Active** |
-| **Ren'Py Visual Novels** | `assets/x-game/`, `*.rpa`, `*.rpyc` | 🚧 **In Development** |
-| **Godot Engine** | `assets/project.pck`, `*.pck` | 🚧 **In Development** |
+| **Ren'Py Visual Novels** | `assets/x-game/`, `*.rpa`, `*.rpyc` | ✅ **Active (Pyodide)** |
+| **Godot Engine** | `assets/*.pck`, `*.pck` | ✅ **Active (.pck mounting)** |
+| **Play Asset Delivery (PAD)** | `assetPackInstallTime-*.apk`, Split APKs | ✅ **Active (Auto-Unpack)** |
 | **GameMaker Studio** | `assets/game.droid`, `assets/data.win` | 🚧 **In Development** |
 | **LÖVE2D** | `assets/game.love` | 📋 **Planned** |
 | **Unity 2D (C++)** | `lib/arm64-v8a/libunity.so` | 📋 **Planned (FalsoJNI)** |

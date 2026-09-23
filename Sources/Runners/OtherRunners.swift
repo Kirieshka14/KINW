@@ -2,28 +2,6 @@ import Foundation
 import UIKit
 import SwiftUI
 
-// MARK: - Godot Runner
-public final class GodotRunner: NSObject, GameRunnerProtocol {
-    public let bottle: Bottle
-
-    public init(bottle: Bottle) {
-        self.bottle = bottle
-        super.init()
-    }
-
-    public func makeViewController() -> UIViewController {
-        return RunnerPlaceholderViewController(
-            title: "Godot Engine",
-            engineName: "Godot",
-            bottle: bottle,
-            instructions: "Godot PCK archive detected at: \(bottle.entryPoint).\n\nMounts into Godot iOS runner using Metal rendering."
-        )
-    }
-
-    public func pause() {}
-    public func resume() {}
-    public func stop() {}
-}
 
 // MARK: - GameMaker Runner
 public final class GameMakerRunner: NSObject, GameRunnerProtocol {

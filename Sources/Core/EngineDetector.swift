@@ -114,15 +114,18 @@ public final class EngineDetector {
         }
 
         // 4. Check for Godot
-        for file in allFiles {
-            let lower = file.lowercased()
-            if lower.hasSuffix(".pck") || lower.contains("libgodot_android.so") {
-                return EngineDetectionResult(
-                    engine: .godot,
-                    entryPoint: file,
-                    details: "Detected Godot PCK archive (\(file))"
-                )
-            }
+        if let pckFile = allFiles.first(where: { $0.lowercased().hasSuffix(".pck") }) {
+            return EngineDetectionResult(
+                engine: .godot,
+                entryPoint: pckFile,
+                details: "Detected Godot PCK archive (\(pckFile))"
+            )
+        } else if let godotSo = allFiles.first(where: { $0.lowercased().contains("libgodot_android.so") }) {
+            return EngineDetectionResult(
+                engine: .godot,
+                entryPoint: godotSo,
+                details: "Detected Godot Engine binary (\(godotSo))"
+            )
         }
 
         // 5. Check for GameMaker

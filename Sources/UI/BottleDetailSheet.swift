@@ -10,6 +10,12 @@ public struct BottleDetailSheet: View {
     @State private var selectedEntryPoint: String
     @State private var fileNodes: [FileNode] = []
     @State private var isLoadingFiles = true
+    @State private var isExtractingSplit = false
+    @State private var extractProgressText = ""
+
+    private var hasNestedAPKs: Bool {
+        fileNodes.contains(where: { $0.name.hasSuffix(".apk") })
+    }
 
     public init(bottle: Binding<Bottle>, onPlay: @escaping () -> Void) {
         self._bottle = bottle
@@ -118,6 +124,54 @@ public struct BottleDetailSheet: View {
                             .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
                         }
 
+                        // Multi-Part Split APK Banner
+                        if hasNestedAPKs {
+                            VStack(alignment: .leading, spacing: 12) {
+                                HStack(spacing: 12) {
+                                    Image(systemName: "shippingbox.fill")
+                                        .font(.system(size: 26))
+                                        .foregroundColor(.cyan)
+
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text("Multi-Part Game Pack Detected")
+                                            .font(.system(size: 15, weight: .bold))
+                                            .foregroundColor(.white)
+                                        Text(extractProgressText.isEmpty ? "Split APKs detected (Play Asset Delivery). Extract to unpack game data & engine." : extractProgressText)
+                                            .font(.system(size: 12))
+                                            .foregroundColor(.gray)
+                                            .lineLimit(2)
+                                    }
+                                    Spacer()
+                                }
+
+                                Button(action: triggerSplitExtraction) {
+                                    HStack {
+                                        if isExtractingSplit {
+                                            ProgressView().tint(.white).padding(.trailing, 6)
+                                            Text("Extracting Game Data...")
+                                        } else {
+                                            Image(systemName: "arrow.down.circle.fill")
+                                            Text("Extract Game Data Now")
+                                        }
+                                    }
+                                    .font(.system(size: 14, weight: .bold))
+                                    .foregroundColor(.white)
+                                    .frame(maxWidth: .infinity)
+                                    .padding(.vertical, 12)
+                                    .background(LinearGradient(colors: [Color.cyan, Color.blue], startPoint: .leading, endPoint: .trailing))
+                                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                                }
+                                .disabled(isExtractingSplit)
+                            }
+                            .padding(16)
+                            .background(Color.cyan.opacity(0.12))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                                    .stroke(Color.cyan.opacity(0.35), lineWidth: 1.5)
+                            )
+                            .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+                        }
+
                         // File Explorer / Assets Tree
                         VStack(alignment: .leading, spacing: 14) {
                             HStack {
@@ -217,6 +271,33 @@ public struct BottleDetailSheet: View {
         bottle.config.orientation = selectedOrientation
         bottle.entryPoint = selectedEntryPoint
         BottleManager.shared.saveIndex()
+    }
+
+    private func triggerSplitExtraction() {
+        guard !isExtractingSplit else { return }
+        isExtractingSplit = true
+        extractProgressText = "Starting game pack extraction..."
+
+        Task {
+            if let updated = await BottleManager.shared.prepareBottleIfNeeded(bottleId: bottle.id, onProgress: { status, prog in
+                DispatchQueue.main.async {
+                    self.extractProgressText = "\(status) (\(Int(prog * 100))%)"
+                }
+            }) {
+                await MainActor.run {
+                    self.bottle = updated
+                    self.selectedEngine = updated.engine
+                    self.selectedEntryPoint = updated.entryPoint
+                    self.isExtractingSplit = false
+                    self.loadPackageFiles()
+                }
+            } else {
+                await MainActor.run {
+                    self.isExtractingSplit = false
+                    self.loadPackageFiles()
+                }
+            }
+        }
     }
 
     private func autoSelectEntryPoint(for engine: GameEngineType) {
