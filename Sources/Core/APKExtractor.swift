@@ -45,21 +45,35 @@ public final class APKExtractor {
         var manifestSize: Int = 0
 
         let readRes = kinw_zip_read_file(apkURL.path, "AndroidManifest.xml", &manifestDataPtr, &manifestSize)
-        guard readRes == 0, let dataPtr = manifestDataPtr, manifestSize > 0 else {
-            throw APKExtractionError.manifestReadFailed
-        }
-        defer { free(manifestDataPtr) }
+        var packageName = apkURL.deletingPathExtension().lastPathComponent
+        var appLabel = packageName
+        var versionName = "1.0"
+        var versionCode = 1
+        var mainActivity = ""
+        var screenOrientation = "sensorLandscape"
 
-        var info = kinw_parse_manifest(dataPtr, manifestSize)
-        guard info.isSuccess != 0 else {
-            throw APKExtractionError.manifestParseFailed
-        }
+        if readRes == 0, let dataPtr = manifestDataPtr, manifestSize > 0 {
+            defer { free(manifestDataPtr) }
+            var info = kinw_parse_manifest(dataPtr, manifestSize)
+            if info.isSuccess != 0 {
+                let parsedPackage = String(cString: getTuplePointer(&info.packageName))
+                if !parsedPackage.isEmpty { packageName = parsedPackage }
 
-        let packageName = String(cString: getTuplePointer(&info.packageName))
-        let appLabel = String(cString: getTuplePointer(&info.appLabel))
-        let versionName = String(cString: getTuplePointer(&info.versionName))
-        let mainActivity = String(cString: getTuplePointer(&info.mainActivity))
-        let screenOrientation = String(cString: getTuplePointer(&info.screenOrientation))
+                let parsedLabel = String(cString: getTuplePointer(&info.appLabel))
+                if !parsedLabel.isEmpty && !parsedLabel.starts(with: "@") {
+                    appLabel = parsedLabel
+                }
+
+                let parsedVersion = String(cString: getTuplePointer(&info.versionName))
+                if !parsedVersion.isEmpty { versionName = parsedVersion }
+
+                versionCode = Int(info.versionCode)
+                mainActivity = String(cString: getTuplePointer(&info.mainActivity))
+
+                let parsedOrientation = String(cString: getTuplePointer(&info.screenOrientation))
+                if !parsedOrientation.isEmpty { screenOrientation = parsedOrientation }
+            }
+        }
 
         // Attempt to extract icon
         var iconData: Data? = nil

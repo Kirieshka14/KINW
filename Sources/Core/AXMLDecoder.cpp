@@ -166,7 +166,7 @@ bool AXMLDecoder::parse(const uint8_t* buffer, size_t size) {
 
                     xml << "<" << tagName;
 
-                    const uint8_t* attrPtr = buffer + offset + attrStart;
+                    const uint8_t* attrPtr = buffer + offset + 16 + attrStart;
                     for (uint16_t i = 0; i < attrCount; ++i) {
                         if (attrPtr + 20 > buffer + size) break;
 
@@ -179,7 +179,9 @@ bool AXMLDecoder::parse(const uint8_t* buffer, size_t size) {
 
                         std::string attrValue = attrRawValue;
                         if (attrValue.empty()) {
-                            if (dataType == 0x10) { // TYPE_INT_DEC
+                            if (dataType == 0x03) { // TYPE_STRING
+                                attrValue = getString(dataVal);
+                            } else if (dataType == 0x10) { // TYPE_INT_DEC
                                 attrValue = std::to_string(static_cast<int32_t>(dataVal));
                             } else if (dataType == 0x11) { // TYPE_INT_HEX
                                 char hexBuf[32];
@@ -253,10 +255,20 @@ bool AXMLDecoder::parse(const uint8_t* buffer, size_t size) {
     }
 
     xmlOutput_ = xml.str();
-    metadata_.isValid = !metadata_.packageName.empty();
+    if (metadata_.packageName.empty()) {
+        metadata_.packageName = "app.kinw.imported";
+    }
+    metadata_.isValid = true;
 
-    if (metadata_.appLabel.empty()) {
-        metadata_.appLabel = metadata_.packageName;
+    if (metadata_.appLabel.empty() || metadata_.appLabel[0] == '@') {
+        size_t lastDot = metadata_.packageName.rfind('.');
+        if (lastDot != std::string::npos && lastDot + 1 < metadata_.packageName.length()) {
+            std::string sub = metadata_.packageName.substr(lastDot + 1);
+            if (!sub.empty()) sub[0] = std::toupper(sub[0]);
+            metadata_.appLabel = sub;
+        } else {
+            metadata_.appLabel = metadata_.packageName;
+        }
     }
 
     return metadata_.isValid;
