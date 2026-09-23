@@ -171,13 +171,13 @@ public final class RunnerPlaceholderViewController: UIViewController {
         descLabel.textAlignment = .center
         descLabel.numberOfLines = 0
 
-        let closeBtn = UIButton(type: .system)
-        closeBtn.setTitle("Back to KINW Library", for: .normal)
-        closeBtn.titleLabel?.font = .systemFont(ofSize: 16, weight: .semibold)
-        closeBtn.setTitleColor(.white, for: .normal)
-        closeBtn.backgroundColor = UIColor.systemBlue
-        closeBtn.layer.cornerRadius = 12
-        closeBtn.contentEdgeInsets = UIEdgeInsets(top: 12, left: 24, bottom: 12, right: 24)
+        var btnConfig = UIButton.Configuration.filled()
+        btnConfig.title = "Back to KINW Library"
+        btnConfig.baseBackgroundColor = .systemBlue
+        btnConfig.baseForegroundColor = .white
+        btnConfig.contentInsets = NSDirectionalEdgeInsets(top: 12, leading: 24, bottom: 12, trailing: 24)
+        btnConfig.cornerStyle = .medium
+        let closeBtn = UIButton(configuration: btnConfig)
         closeBtn.addTarget(self, action: #selector(handleClose), for: .touchUpInside)
 
         stack.addArrangedSubview(iconLabel)

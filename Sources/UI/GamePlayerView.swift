@@ -54,7 +54,7 @@ public struct GamePlayerView: View {
             Button("Cancel", role: .cancel) {}
         }
         .navigationBarHidden(true)
-        .statusBar(hidden: true)
+        .statusBarHidden(true)
     }
 }
 

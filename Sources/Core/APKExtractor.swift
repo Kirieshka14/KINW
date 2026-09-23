@@ -50,7 +50,7 @@ public final class APKExtractor {
         }
         defer { free(manifestDataPtr) }
 
-        let info = kinw_parse_manifest(dataPtr, manifestSize)
+        var info = kinw_parse_manifest(dataPtr, manifestSize)
         guard info.isSuccess != 0 else {
             throw APKExtractionError.manifestParseFailed
         }

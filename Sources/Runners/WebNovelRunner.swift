@@ -81,7 +81,6 @@ public final class WebNovelViewController: UIViewController, WKScriptMessageHand
         let config = WKWebViewConfiguration()
         config.allowsInlineMediaPlayback = true
         config.mediaTypesRequiringUserActionForPlayback = []
-        config.preferences.setValue(true, forKey: "allowFileAccessFromFileURLs")
 
         // Hook custom scheme to serve bottle files
         config.setURLSchemeHandler(self, forURLScheme: customScheme)
