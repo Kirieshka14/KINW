@@ -1,13 +1,14 @@
 #ifndef KINW_AXML_DECODER_HPP
 #define KINW_AXML_DECODER_HPP
 
-#include <cstdint>
-#include <cstddef>
+#include <stdint.h>
+#include <stddef.h>
+
+#ifdef __cplusplus
 #include <string>
 #include <vector>
 #include <map>
 
-#ifdef __cplusplus
 extern "C" {
 #endif
 
