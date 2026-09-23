@@ -1,0 +1,22 @@
+# Xcode / Build Artifacts
+*.xcodeproj
+*.xcworkspace
+build/
+DerivedData/
+*.ipa
+Payload/
+*.dSYM
+
+# C / C++ build files
+*.o
+*.a
+*.so
+*.dylib
+build_test_*
+
+# OS / Editor
+.DS_Store
+*.swp
+*~
+.idea/
+.vscode/
