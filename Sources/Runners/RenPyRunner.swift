@@ -29,12 +29,25 @@ public final class RenPyRunner: NSObject, GameRunnerProtocol {
     public func stop() {
         viewController?.stop()
     }
+
+    public func reload() {
+        viewController?.reload()
+    }
+
+    public func sendKey(code: String, key: String, down: Bool) {
+        viewController?.dispatchKeyEvent(code: code, key: key, down: down)
+    }
+
+    public var consoleLogs: [String] {
+        return viewController?.capturedLogs ?? []
+    }
 }
 
 public final class RenPyViewController: UIViewController, WKScriptMessageHandler, WKURLSchemeHandler {
     private let bottle: Bottle
     private var webView: WKWebView!
     private let customScheme = "kinw-renpy"
+    public private(set) var capturedLogs: [String] = []
 
     public init(bottle: Bottle) {
         self.bottle = bottle
@@ -47,7 +60,7 @@ public final class RenPyViewController: UIViewController, WKScriptMessageHandler
 
     override public func viewDidLoad() {
         super.viewDidLoad()
-        view.backgroundColor = .black
+        view.backgroundColor = UIColor(red: 0.05, green: 0.06, blue: 0.08, alpha: 1.0)
 
         setupAudioSession()
         setupWebView()
@@ -67,7 +80,7 @@ public final class RenPyViewController: UIViewController, WKScriptMessageHandler
             try AVAudioSession.sharedInstance().setCategory(.playback, mode: .default, options: [])
             try AVAudioSession.sharedInstance().setActive(true)
         } catch {
-            print("[KINW-RenPy] Audio session error: \(error)")
+            addLog("[KINW-RenPy] Audio session error: \(error.localizedDescription)")
         }
     }
 
@@ -80,6 +93,11 @@ public final class RenPyViewController: UIViewController, WKScriptMessageHandler
         let userContentController = WKUserContentController()
         let scriptSource = """
         document.addEventListener('contextmenu', e => e.preventDefault());
+        document.addEventListener('selectstart', e => e.preventDefault());
+        if (document.documentElement) {
+            document.documentElement.style.backgroundColor = '#08090C';
+        }
+
         window.kinwSaveStorage = function() {
             try {
                 let data = JSON.stringify(window.localStorage);
@@ -87,16 +105,24 @@ public final class RenPyViewController: UIViewController, WKScriptMessageHandler
             } catch(e) {}
         };
         setInterval(window.kinwSaveStorage, 5000);
+
+        window.addEventListener('error', function(e) {
+            try {
+                window.webkit.messageHandlers.kinwLog.postMessage('[JS-ERR] ' + e.message);
+            } catch(err) {}
+        });
         """
-        let userScript = WKUserScript(source: scriptSource, injectionTime: .atDocumentEnd, forMainFrameOnly: false)
+        let userScript = WKUserScript(source: scriptSource, injectionTime: .atDocumentStart, forMainFrameOnly: false)
         userContentController.addUserScript(userScript)
         userContentController.add(self, name: "saveSync")
+        userContentController.add(self, name: "kinwLog")
         config.userContentController = userContentController
 
         webView = WKWebView(frame: view.bounds, configuration: config)
         webView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
         webView.backgroundColor = .black
-        webView.isOpaque = true
+        webView.isOpaque = false
+        webView.scrollView.backgroundColor = .black
         webView.scrollView.isScrollEnabled = false
         webView.scrollView.bounces = false
 
@@ -105,7 +131,7 @@ public final class RenPyViewController: UIViewController, WKScriptMessageHandler
 
     private func loadGame() {
         let bottleDir = BottleManager.shared.bottleDirectory(for: bottle.id)
-        
+
         // Find Ren'Py game folder or entry
         let candidates = ["assets/x-game", "assets/game", "base/game", "assets", ""]
         var gameFolder = ""
@@ -117,7 +143,7 @@ public final class RenPyViewController: UIViewController, WKScriptMessageHandler
             }
         }
 
-        // Generate Ren'Py Web loader page
+        addLog("[KINW-RenPy] Mounting game directory: \(gameFolder.isEmpty ? "root" : gameFolder)")
         let html = generateRenPyLoaderHTML(gameFolder: gameFolder)
         webView.loadHTMLString(html, baseURL: URL(string: "\(customScheme)://localhost/"))
     }
@@ -135,7 +161,7 @@ public final class RenPyViewController: UIViewController, WKScriptMessageHandler
                 body { background: #08090C; color: #fff; font-family: -apple-system, system-ui, sans-serif; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; overflow: hidden; }
                 #canvas { width: 100vw; height: 100vh; object-fit: contain; background: #000; }
                 .loader-box { text-align: center; max-width: 400px; padding: 24px; }
-                .spinner { width: 50px; height: 50px; border: 4px solid rgba(0,255,255,0.2); border-top-color: #00e5ff; border-radius: 50%; animation: spin 1s infinite linear; margin: 0 auto 16px; }
+                .spinner { width: 50px; height: 50px; border: 4px solid rgba(0,229,255,0.2); border-top-color: #00e5ff; border-radius: 50%; animation: spin 1s infinite linear; margin: 0 auto 16px; }
                 @keyframes spin { 100% { transform: rotate(360deg); } }
                 h2 { font-size: 20px; font-weight: 700; margin-bottom: 8px; }
                 p { font-size: 13px; color: #8E8E93; line-height: 1.5; }
@@ -151,10 +177,8 @@ public final class RenPyViewController: UIViewController, WKScriptMessageHandler
             </div>
             <canvas id="canvas" style="display:none;"></canvas>
             <script>
-                // Bridge to initialize Ren'Py Web runtime
                 console.log("[KINW] Initializing Ren'Py for: \(bottle.packageName)");
                 setTimeout(() => {
-                    // Try loading existing web export if embedded
                     fetch("/assets/www/index.html").then(res => {
                         if (res.ok) {
                             window.location.href = "/assets/www/index.html";
@@ -167,6 +191,28 @@ public final class RenPyViewController: UIViewController, WKScriptMessageHandler
         """
     }
 
+    public func reload() {
+        addLog("[KINW-RenPy] Reload requested")
+        loadGame()
+    }
+
+    public func dispatchKeyEvent(code: String, key: String, down: Bool) {
+        let type = down ? "keydown" : "keyup"
+        let js = """
+        (function() {
+            var evt = new KeyboardEvent('\(type)', {
+                key: '\(key)',
+                code: '\(code)',
+                bubbles: true,
+                cancelable: true
+            });
+            document.dispatchEvent(evt);
+            window.dispatchEvent(evt);
+        })();
+        """
+        webView.evaluateJavaScript(js, completionHandler: nil)
+    }
+
     public func pause() {}
     public func resume() {}
     public func stop() {
@@ -177,7 +223,18 @@ public final class RenPyViewController: UIViewController, WKScriptMessageHandler
         if message.name == "saveSync", let json = message.body as? String {
             let savesFile = BottleManager.shared.savesDirectory(for: bottle.id).appendingPathComponent("localstorage.json")
             try? json.data(using: .utf8)?.write(to: savesFile)
+        } else if message.name == "kinwLog", let logText = message.body as? String {
+            addLog(logText)
         }
+    }
+
+    private func addLog(_ message: String) {
+        let timestamp = DateFormatter.localizedString(from: Date(), dateStyle: .none, timeStyle: .medium)
+        capturedLogs.append("[\(timestamp)] \(message)")
+        if capturedLogs.count > 100 {
+            capturedLogs.removeFirst()
+        }
+        print("[KINW-RenPy] \(message)")
     }
 
     // MARK: - WKURLSchemeHandler
@@ -187,12 +244,25 @@ public final class RenPyViewController: UIViewController, WKScriptMessageHandler
             return
         }
 
-        let relativePath = url.path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        let rawPath = url.path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
         let bottleDir = BottleManager.shared.bottleDirectory(for: bottle.id)
-        let fileURL = bottleDir.appendingPathComponent(relativePath)
 
-        if FileManager.default.fileExists(atPath: fileURL.path),
-           let data = try? Data(contentsOf: fileURL) {
+        var candidates: [URL] = [
+            bottleDir.appendingPathComponent(rawPath),
+            bottleDir.appendingPathComponent("assets").appendingPathComponent(rawPath),
+            bottleDir.appendingPathComponent("assets/x-game").appendingPathComponent(rawPath),
+            bottleDir.appendingPathComponent("assets/game").appendingPathComponent(rawPath)
+        ]
+
+        var matchedURL: URL?
+        for cand in candidates {
+            if FileManager.default.fileExists(atPath: cand.path) {
+                matchedURL = cand
+                break
+            }
+        }
+
+        if let target = matchedURL, let data = try? Data(contentsOf: target) {
             let response = HTTPURLResponse(
                 url: url,
                 statusCode: 200,
@@ -203,7 +273,16 @@ public final class RenPyViewController: UIViewController, WKScriptMessageHandler
             urlSchemeTask.didReceive(data)
             urlSchemeTask.didFinish()
         } else {
-            urlSchemeTask.didFailWithError(URLError(.fileDoesNotExist))
+            addLog("[RenPy-404] Missing: \(rawPath)")
+            let notFound = HTTPURLResponse(
+                url: url,
+                statusCode: 404,
+                httpVersion: "HTTP/1.1",
+                headerFields: ["Access-Control-Allow-Origin": "*"]
+            )!
+            urlSchemeTask.didReceive(notFound)
+            urlSchemeTask.didReceive(Data())
+            urlSchemeTask.didFinish()
         }
     }
 

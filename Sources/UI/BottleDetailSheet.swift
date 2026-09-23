@@ -7,16 +7,16 @@ public struct BottleDetailSheet: View {
 
     @State private var selectedEngine: GameEngineType
     @State private var selectedOrientation: String
+    @State private var selectedEntryPoint: String
     @State private var fileNodes: [FileNode] = []
     @State private var isLoadingFiles = true
-    @State private var showingExportShare = false
-    @State private var exportZipURL: URL? = nil
 
     public init(bottle: Binding<Bottle>, onPlay: @escaping () -> Void) {
         self._bottle = bottle
         self.onPlay = onPlay
         self._selectedEngine = State(initialValue: bottle.wrappedValue.engine)
         self._selectedOrientation = State(initialValue: bottle.wrappedValue.config.orientation)
+        self._selectedEntryPoint = State(initialValue: bottle.wrappedValue.entryPoint)
     }
 
     public var body: some View {
@@ -69,6 +69,9 @@ public struct BottleDetailSheet: View {
                                     }
                                     .pickerStyle(.menu)
                                     .tint(.cyan)
+                                    .onChange(of: selectedEngine) { newEngine in
+                                        autoSelectEntryPoint(for: newEngine)
+                                    }
                                 }
 
                                 Divider().background(Color.white.opacity(0.1))
@@ -88,15 +91,26 @@ public struct BottleDetailSheet: View {
 
                                 Divider().background(Color.white.opacity(0.1))
 
-                                // Entry Point info
-                                VStack(alignment: .leading, spacing: 4) {
-                                    Text("Entry Point")
-                                        .font(.system(size: 13))
-                                        .foregroundColor(.gray)
-                                    Text(bottle.entryPoint.isEmpty ? "Automatic" : bottle.entryPoint)
-                                        .font(.system(size: 12, design: .monospaced))
+                                // Entry Point
+                                VStack(alignment: .leading, spacing: 6) {
+                                    HStack {
+                                        Text("Entry Point")
+                                            .font(.system(size: 13))
+                                            .foregroundColor(.gray)
+                                        Spacer()
+                                        Button("Auto-Detect") {
+                                            autoSelectEntryPoint(for: selectedEngine)
+                                        }
+                                        .font(.system(size: 12, weight: .semibold))
                                         .foregroundColor(.cyan)
-                                        .lineLimit(2)
+                                    }
+
+                                    TextField("Entry Path", text: $selectedEntryPoint)
+                                        .font(.system(size: 12, design: .monospaced))
+                                        .foregroundColor(.white)
+                                        .padding(10)
+                                        .background(Color.black.opacity(0.3))
+                                        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
                                 }
                             }
                             .padding(16)
@@ -106,10 +120,16 @@ public struct BottleDetailSheet: View {
 
                         // File Explorer / Assets Tree
                         VStack(alignment: .leading, spacing: 14) {
-                            Text("PACKAGE ASSETS & FILES")
-                                .font(.system(size: 11, weight: .bold))
-                                .foregroundColor(.gray)
-                                .padding(.horizontal, 4)
+                            HStack {
+                                Text("PACKAGE ASSETS & FILES")
+                                    .font(.system(size: 11, weight: .bold))
+                                    .foregroundColor(.gray)
+                                Spacer()
+                                Text("Tap file to set entry point")
+                                    .font(.system(size: 11))
+                                    .foregroundColor(.cyan.opacity(0.8))
+                            }
+                            .padding(.horizontal, 4)
 
                             VStack(spacing: 8) {
                                 if isLoadingFiles {
@@ -122,11 +142,19 @@ public struct BottleDetailSheet: View {
                                         .foregroundColor(.gray)
                                         .padding(20)
                                 } else {
-                                    ForEach(fileNodes.prefix(25)) { node in
-                                        FileNodeRow(node: node)
+                                    ForEach(fileNodes.prefix(35)) { node in
+                                        FileNodeRow(
+                                            node: node,
+                                            isEntryPoint: node.relativePath == selectedEntryPoint,
+                                            onSelect: {
+                                                if !node.isDirectory {
+                                                    selectedEntryPoint = node.relativePath
+                                                }
+                                            }
+                                        )
                                     }
-                                    if fileNodes.count > 25 {
-                                        Text("+ \(fileNodes.count - 25) more items...")
+                                    if fileNodes.count > 35 {
+                                        Text("+ \(fileNodes.count - 35) more items...")
                                             .font(.system(size: 12, design: .monospaced))
                                             .foregroundColor(.gray)
                                             .padding(.top, 4)
@@ -187,7 +215,50 @@ public struct BottleDetailSheet: View {
     private func saveChanges() {
         bottle.engine = selectedEngine
         bottle.config.orientation = selectedOrientation
+        bottle.entryPoint = selectedEntryPoint
         BottleManager.shared.saveIndex()
+    }
+
+    private func autoSelectEntryPoint(for engine: GameEngineType) {
+        let dir = BottleManager.shared.bottleDirectory(for: bottle.id)
+        let fileManager = FileManager.default
+
+        guard let enumerator = fileManager.enumerator(at: dir, includingPropertiesForKeys: nil) else { return }
+
+        var allRelative: [String] = []
+        for case let fileURL as URL in enumerator {
+            let rel = fileURL.path.replacingOccurrences(of: dir.path + "/", with: "")
+            allRelative.append(rel)
+        }
+
+        switch engine {
+        case .webNovel, .rpgMaker:
+            if let html = allRelative.first(where: { $0.hasSuffix("index.html") }) ?? allRelative.first(where: { $0.hasSuffix(".html") }) {
+                selectedEntryPoint = html
+            }
+        case .renpy:
+            if let rpa = allRelative.first(where: { $0.hasSuffix(".rpa") }) ?? allRelative.first(where: { $0.hasSuffix(".rpyc") }) {
+                selectedEntryPoint = rpa
+            }
+        case .godot:
+            if let pck = allRelative.first(where: { $0.hasSuffix(".pck") }) {
+                selectedEntryPoint = pck
+            }
+        case .love2d:
+            if let love = allRelative.first(where: { $0.hasSuffix(".love") }) ?? allRelative.first(where: { $0.hasSuffix("main.lua") }) {
+                selectedEntryPoint = love
+            }
+        case .gameMaker:
+            if let gm = allRelative.first(where: { $0.hasSuffix("game.droid") || $0.hasSuffix("data.win") }) {
+                selectedEntryPoint = gm
+            }
+        case .genericNative, .unity:
+            if let so = allRelative.first(where: { $0.hasSuffix(".so") }) {
+                selectedEntryPoint = so
+            }
+        case .unknown:
+            break
+        }
     }
 
     private func loadPackageFiles() {
@@ -204,25 +275,42 @@ public struct BottleDetailSheet: View {
 
 struct FileNodeRow: View {
     let node: FileNode
+    let isEntryPoint: Bool
+    let onSelect: () -> Void
 
     var body: some View {
-        HStack(spacing: 8) {
-            Image(systemName: node.isDirectory ? "folder.fill" : fileIcon(for: node.name))
-                .font(.system(size: 13))
-                .foregroundColor(node.isDirectory ? .yellow : .cyan)
+        Button(action: onSelect) {
+            HStack(spacing: 8) {
+                Image(systemName: node.isDirectory ? "folder.fill" : fileIcon(for: node.name))
+                    .font(.system(size: 13))
+                    .foregroundColor(node.isDirectory ? .yellow : .cyan)
 
-            Text(node.name)
-                .font(.system(size: 13, design: .monospaced))
-                .foregroundColor(.white)
-                .lineLimit(1)
+                Text(node.name)
+                    .font(.system(size: 13, design: .monospaced))
+                    .foregroundColor(isEntryPoint ? .cyan : .white)
+                    .fontWeight(isEntryPoint ? .bold : .regular)
+                    .lineLimit(1)
 
-            Spacer()
+                if isEntryPoint {
+                    Text("ENTRY")
+                        .font(.system(size: 9, weight: .black))
+                        .foregroundColor(.black)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(Color.cyan)
+                        .clipShape(Capsule())
+                }
 
-            Text(node.formattedSize)
-                .font(.system(size: 11, design: .monospaced))
-                .foregroundColor(.gray)
+                Spacer()
+
+                Text(node.formattedSize)
+                    .font(.system(size: 11, design: .monospaced))
+                    .foregroundColor(.gray)
+            }
+            .padding(.vertical, 3)
+            .contentShape(Rectangle())
         }
-        .padding(.vertical, 2)
+        .buttonStyle(.plain)
     }
 
     private func fileIcon(for filename: String) -> String {

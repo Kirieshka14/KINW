@@ -6,6 +6,8 @@ public struct GamePlayerView: View {
     @Environment(\.dismiss) private var dismiss
 
     @State private var showingMenu = false
+    @State private var showingDiagnostics = false
+    @State private var showVirtualGamepad = false
     @State private var runner: GameRunnerProtocol?
 
     public init(bottle: Bottle) {
@@ -21,16 +23,25 @@ public struct GamePlayerView: View {
                     .ignoresSafeArea()
             }
 
+            // Virtual Gamepad Overlay (when enabled)
+            if showVirtualGamepad {
+                VirtualGamepadOverlay { code, key, isDown in
+                    runner?.sendKey(code: code, key: key, down: isDown)
+                }
+                .ignoresSafeArea()
+                .transition(.opacity)
+            }
+
             // Floating Quick-Action Menu Button (Top Right)
             VStack {
                 HStack {
                     Spacer()
 
-                    Button(action: { showingMenu.toggle() }) {
+                    Button(action: { showingMenu = true }) {
                         Image(systemName: "line.3.horizontal.circle.fill")
-                            .font(.system(size: 32))
-                            .foregroundStyle(Color.white.opacity(0.6), Color.black.opacity(0.4))
-                            .shadow(radius: 4)
+                            .font(.system(size: 34))
+                            .foregroundStyle(Color.white.opacity(0.8), Color.black.opacity(0.6))
+                            .shadow(color: .black.opacity(0.5), radius: 6, x: 0, y: 2)
                     }
                     .padding(.top, 16)
                     .padding(.trailing, 20)
@@ -46,11 +57,29 @@ public struct GamePlayerView: View {
         .onDisappear {
             runner?.stop()
         }
-        .confirmationDialog("KINW Quick Menu", isPresented: $showingMenu, titleVisibility: .visible) {
+        .sheet(isPresented: $showingDiagnostics) {
+            GameDiagnosticsSheet(bottle: bottle, logs: runner?.consoleLogs ?? [])
+        }
+        .confirmationDialog("KINW Game Menu", isPresented: $showingMenu, titleVisibility: .visible) {
+            Button(showVirtualGamepad ? "Hide Virtual Gamepad" : "Show Virtual Gamepad (D-Pad)") {
+                withAnimation(.easeInOut(duration: 0.2)) {
+                    showVirtualGamepad.toggle()
+                }
+            }
+
+            Button("View Live Logs & Diagnostics") {
+                showingDiagnostics = true
+            }
+
+            Button("Reload Game") {
+                runner?.reload()
+            }
+
             Button("Exit to Library", role: .destructive) {
                 runner?.stop()
                 dismiss()
             }
+
             Button("Cancel", role: .cancel) {}
         }
         .navigationBarHidden(true)

@@ -8,6 +8,15 @@ public protocol GameRunnerProtocol: AnyObject {
     func pause()
     func resume()
     func stop()
+    func reload()
+    func sendKey(code: String, key: String, down: Bool)
+    var consoleLogs: [String] { get }
+}
+
+public extension GameRunnerProtocol {
+    func reload() {}
+    func sendKey(code: String, key: String, down: Bool) {}
+    var consoleLogs: [String] { [] }
 }
 
 public final class RunnerRegistry {
