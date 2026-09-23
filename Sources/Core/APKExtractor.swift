@@ -101,7 +101,7 @@ public final class APKExtractor {
             packageName: packageName,
             appLabel: appLabel.isEmpty ? packageName : appLabel,
             versionName: versionName,
-            versionCode: Int(info.versionCode),
+            versionCode: versionCode,
             mainActivity: mainActivity,
             screenOrientation: screenOrientation.isEmpty ? "sensorLandscape" : screenOrientation,
             iconData: iconData
