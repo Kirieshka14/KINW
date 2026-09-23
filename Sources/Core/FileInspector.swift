@@ -43,7 +43,7 @@ public final class FileInspector {
         for item in contents.sorted(by: { $0.lastPathComponent < $1.lastPathComponent }) {
             let isDir = (try? item.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) ?? false
             let size = Int64((try? item.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0)
-            let relative = item.path.replacingOccurrences(of: root.path + "/", with: "")
+            let relative = item.relativePath(from: root)
 
             if isDir {
                 let children = currentDepth < maxDepth ? scanDirectory(item, root: root, currentDepth: currentDepth + 1, maxDepth: maxDepth) : []

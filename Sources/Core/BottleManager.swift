@@ -57,7 +57,7 @@ public final class BottleManager: ObservableObject {
     private let indexFileName = "bottles.json"
 
     public var baseDirectory: URL {
-        let documents = fileManager.urls(for: .documentDirectory, in: .userDomainMask)[0]
+        let documents = fileManager.urls(for: .documentDirectory, in: .userDomainMask)[0].resolvingSymlinksInPath()
         let bottlesDir = documents.appendingPathComponent("Bottles", isDirectory: true)
         if !fileManager.fileExists(atPath: bottlesDir.path) {
             try? fileManager.createDirectory(at: bottlesDir, withIntermediateDirectories: true)
@@ -178,5 +178,23 @@ public final class BottleManager: ObservableObject {
             bottles[idx].lastPlayedDate = Date()
             saveIndex()
         }
+    }
+}
+
+public extension URL {
+    func relativePath(from base: URL) -> String {
+        let basePath = base.resolvingSymlinksInPath().standardized.path
+        let filePath = self.resolvingSymlinksInPath().standardized.path
+        if filePath.hasPrefix(basePath) {
+            let sub = filePath.dropFirst(basePath.count)
+            return String(sub).trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        }
+        let rawBase = base.standardized.path
+        let rawFile = self.standardized.path
+        if rawFile.hasPrefix(rawBase) {
+            let sub = rawFile.dropFirst(rawBase.count)
+            return String(sub).trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        }
+        return self.lastPathComponent
     }
 }

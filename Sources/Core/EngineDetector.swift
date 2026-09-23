@@ -58,7 +58,7 @@ public final class EngineDetector {
         var allFiles: [String] = []
         if let enumerator = fileManager.enumerator(at: rootDirectory, includingPropertiesForKeys: nil) {
             for case let fileURL as URL in enumerator {
-                let rel = fileURL.path.replacingOccurrences(of: rootDirectory.path + "/", with: "")
+                let rel = fileURL.relativePath(from: rootDirectory)
                 allFiles.append(rel)
             }
         }
@@ -102,7 +102,10 @@ public final class EngineDetector {
         }
 
         // Check if ANY index.html or .html exists in assets
-        if let htmlFile = allFiles.first(where: { $0.lowercased().hasPrefix("assets/") && $0.lowercased().hasSuffix("index.html") }) {
+        if let htmlFile = allFiles.first(where: { 
+            let l = $0.lowercased()
+            return l.hasPrefix("assets/") && (l.hasSuffix(".html") || l.hasSuffix(".htm"))
+        }) {
             return EngineDetectionResult(
                 engine: .webNovel,
                 entryPoint: htmlFile,

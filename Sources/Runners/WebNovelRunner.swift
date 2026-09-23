@@ -195,8 +195,10 @@ public final class WebNovelViewController: UIViewController, WKScriptMessageHand
     private func loadGame() {
         let bottleDir = BottleManager.shared.bottleDirectory(for: bottle.id)
         var entryRelative = bottle.entryPoint.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        if entryRelative.hasPrefix("privateassets/") {
+            entryRelative = String(entryRelative.dropFirst("private".count))
+        }
 
-        // Check if entryPoint is an actual HTML file
         let fullPath = bottleDir.appendingPathComponent(entryRelative).path
         let isHtml = entryRelative.lowercased().hasSuffix(".html") || entryRelative.lowercased().hasSuffix(".htm")
 
@@ -218,7 +220,8 @@ public final class WebNovelViewController: UIViewController, WKScriptMessageHand
 
         restoreSaves()
 
-        let urlString = "\(customScheme)://localhost/\(entryRelative)"
+        let cleanEntry = entryRelative.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        let urlString = "\(customScheme)://localhost/\(cleanEntry)"
         if let url = URL(string: urlString) {
             addLog("[KINW-VFS] Loading: \(urlString)")
             webView.load(URLRequest(url: url))
@@ -233,6 +236,8 @@ public final class WebNovelViewController: UIViewController, WKScriptMessageHand
             "assets/index.html",
             "www/index.html",
             "index.html",
+            "assets/dropper.html",
+            "dropper.html",
             "assets/game/index.html",
             "game/index.html"
         ]
@@ -246,8 +251,9 @@ public final class WebNovelViewController: UIViewController, WKScriptMessageHand
         // Recursive search for any .html
         if let enumerator = FileManager.default.enumerator(at: root, includingPropertiesForKeys: nil) {
             for case let fileURL as URL in enumerator {
-                if fileURL.pathExtension.lowercased() == "html" || fileURL.pathExtension.lowercased() == "htm" {
-                    let rel = fileURL.path.replacingOccurrences(of: root.path + "/", with: "")
+                let ext = fileURL.pathExtension.lowercased()
+                if ext == "html" || ext == "htm" {
+                    let rel = fileURL.relativePath(from: root)
                     return rel
                 }
             }
@@ -403,26 +409,38 @@ public final class WebNovelViewController: UIViewController, WKScriptMessageHand
         }
 
         let rawPath = url.path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-        let bottleDir = BottleManager.shared.bottleDirectory(for: bottle.id)
-
-        // Try multiple paths to resolve root-relative vs relative URLs
-        var candidates: [URL] = [
-            bottleDir.appendingPathComponent(rawPath)
-        ]
-
-        if !entryBaseDirectory.isEmpty {
-            candidates.append(bottleDir.appendingPathComponent(entryBaseDirectory).appendingPathComponent(rawPath))
+        var pathVariants = [rawPath]
+        if rawPath.hasPrefix("privateassets/") {
+            pathVariants.append(String(rawPath.dropFirst("private".count)))
         }
 
-        candidates.append(bottleDir.appendingPathComponent("assets").appendingPathComponent(rawPath))
-        candidates.append(bottleDir.appendingPathComponent("assets/www").appendingPathComponent(rawPath))
+        let bottleDir = BottleManager.shared.bottleDirectory(for: bottle.id)
+        let resolvedBottleDir = bottleDir.resolvingSymlinksInPath()
 
         var matchedURL: URL?
-        for cand in candidates {
-            if FileManager.default.fileExists(atPath: cand.path) {
-                matchedURL = cand
-                break
+        for p in pathVariants {
+            var candidates: [URL] = [
+                bottleDir.appendingPathComponent(p),
+                resolvedBottleDir.appendingPathComponent(p)
+            ]
+
+            if !entryBaseDirectory.isEmpty {
+                candidates.append(bottleDir.appendingPathComponent(entryBaseDirectory).appendingPathComponent(p))
+                candidates.append(resolvedBottleDir.appendingPathComponent(entryBaseDirectory).appendingPathComponent(p))
             }
+
+            candidates.append(bottleDir.appendingPathComponent("assets").appendingPathComponent(p))
+            candidates.append(resolvedBottleDir.appendingPathComponent("assets").appendingPathComponent(p))
+            candidates.append(bottleDir.appendingPathComponent("assets/www").appendingPathComponent(p))
+            candidates.append(resolvedBottleDir.appendingPathComponent("assets/www").appendingPathComponent(p))
+
+            for cand in candidates {
+                if FileManager.default.fileExists(atPath: cand.path) {
+                    matchedURL = cand
+                    break
+                }
+            }
+            if matchedURL != nil { break }
         }
 
         guard let targetURL = matchedURL,

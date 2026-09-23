@@ -227,7 +227,7 @@ public struct BottleDetailSheet: View {
 
         var allRelative: [String] = []
         for case let fileURL as URL in enumerator {
-            let rel = fileURL.path.replacingOccurrences(of: dir.path + "/", with: "")
+            let rel = fileURL.relativePath(from: dir)
             allRelative.append(rel)
         }
 
