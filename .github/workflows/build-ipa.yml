@@ -12,6 +12,8 @@ jobs:
   build:
     name: Build iOS IPA
     runs-on: macos-14
+    permissions:
+      contents: write
 
     steps:
       - name: Checkout Repository
