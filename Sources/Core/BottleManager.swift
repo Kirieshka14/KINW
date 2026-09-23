@@ -48,7 +48,7 @@ public struct Bottle: Identifiable, Codable {
 public final class BottleManager: ObservableObject {
     public static let shared = BottleManager()
 
-    @Published public private(set) var bottles: [Bottle] = []
+    @Published public var bottles: [Bottle] = []
     @Published public var isImporting: Bool = false
     @Published public var importProgress: Float = 0.0
     @Published public var importStatusText: String = ""
