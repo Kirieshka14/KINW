@@ -3,7 +3,6 @@ options:
   bundleIdPrefix: org.kinw
   deploymentTarget:
     iOS: "16.0"
-  xcodeVersion: "15.0"
 
 settings:
   base:
