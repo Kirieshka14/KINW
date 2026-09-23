@@ -123,7 +123,7 @@ public final class EngineDetector {
         }
         // Check for Godot PCK by magic bytes GDPC in case archive is named without .pck extension
         for file in allFiles {
-            let fullURL = directory.appendingPathComponent(file)
+            let fullURL = rootDirectory.appendingPathComponent(file)
             if isGodotPCKFile(at: fullURL) {
                 return EngineDetectionResult(
                     engine: .godot,
