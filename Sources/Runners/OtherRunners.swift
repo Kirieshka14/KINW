@@ -2,29 +2,6 @@ import Foundation
 import UIKit
 import SwiftUI
 
-// MARK: - Ren'Py Runner
-public final class RenPyRunner: NSObject, GameRunnerProtocol {
-    public let bottle: Bottle
-
-    public init(bottle: Bottle) {
-        self.bottle = bottle
-        super.init()
-    }
-
-    public func makeViewController() -> UIViewController {
-        return RunnerPlaceholderViewController(
-            title: "Ren'Py Visual Novel",
-            engineName: "Ren'Py",
-            bottle: bottle,
-            instructions: "Ren'Py native runner integration. Game scripts (.rpyc/.rpa) detected at: \(bottle.entryPoint).\n\nRen'Py uses Python + SDL2 or Pygame_SDL2 under iOS."
-        )
-    }
-
-    public func pause() {}
-    public func resume() {}
-    public func stop() {}
-}
-
 // MARK: - Godot Runner
 public final class GodotRunner: NSObject, GameRunnerProtocol {
     public let bottle: Bottle

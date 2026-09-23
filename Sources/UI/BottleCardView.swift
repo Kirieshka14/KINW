@@ -1,7 +1,7 @@
 import SwiftUI
 
 public struct BottleCardView: View {
-    public let bottle: Bottle
+    @Binding public var bottle: Bottle
     public let onPlay: () -> Void
     public let onDelete: () -> Void
 
@@ -82,6 +82,15 @@ public struct BottleCardView: View {
 
                 Spacer()
 
+                Button(action: { showingDetails = true }) {
+                    Image(systemName: "slider.horizontal.3")
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundColor(.white.opacity(0.8))
+                        .padding(8)
+                        .background(Color.white.opacity(0.08))
+                        .clipShape(Circle())
+                }
+
                 Button(action: onPlay) {
                     HStack(spacing: 6) {
                         Image(systemName: "play.fill")
@@ -120,9 +129,15 @@ public struct BottleCardView: View {
                         )
                 )
         )
+        .sheet(isPresented: $showingDetails) {
+            BottleDetailSheet(bottle: $bottle, onPlay: onPlay)
+        }
         .contextMenu {
             Button(action: onPlay) {
                 Label("Launch Game", systemImage: "play.fill")
+            }
+            Button(action: { showingDetails = true }) {
+                Label("Bottle Settings & Files", systemImage: "slider.horizontal.3")
             }
             Button(role: .destructive, action: onDelete) {
                 Label("Delete Bottle", systemImage: "trash.fill")

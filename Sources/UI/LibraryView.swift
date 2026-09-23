@@ -130,12 +130,15 @@ public struct LibraryView: View {
                     } else {
                         ScrollView {
                             LazyVStack(spacing: 16) {
-                                ForEach(filteredBottles) { bottle in
-                                    BottleCardView(
-                                        bottle: bottle,
-                                        onPlay: { activeBottle = bottle },
-                                        onDelete: { bottleManager.deleteBottle(bottle) }
-                                    )
+                                ForEach($bottleManager.bottles) { $bottle in
+                                    if (selectedFilter == nil || bottle.engine == selectedFilter) &&
+                                       (searchText.isEmpty || bottle.title.localizedCaseInsensitiveContains(searchText) || bottle.packageName.localizedCaseInsensitiveContains(searchText)) {
+                                        BottleCardView(
+                                            bottle: $bottle,
+                                            onPlay: { activeBottle = bottle },
+                                            onDelete: { bottleManager.deleteBottle(bottle) }
+                                        )
+                                    }
                                 }
                             }
                             .padding(.horizontal, 16)
