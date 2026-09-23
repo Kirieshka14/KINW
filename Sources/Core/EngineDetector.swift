@@ -114,23 +114,23 @@ public final class EngineDetector {
         }
 
         // 4. Check for Godot
-        if let pckFile = allFiles.first(where: { $0.lowercased().hasSuffix(".pck") }) {
-            return EngineDetectionResult(
-                engine: .godot,
-                entryPoint: pckFile,
-                details: "Detected Godot PCK archive (\(pckFile))"
-            )
-        }
-        // Check for Godot PCK by magic bytes GDPC in case archive is named without .pck extension
+        var godotCandidates: [(file: String, version: String, size: Int64)] = []
         for file in allFiles {
             let fullURL = rootDirectory.appendingPathComponent(file)
-            if isGodotPCKFile(at: fullURL) {
-                return EngineDetectionResult(
-                    engine: .godot,
-                    entryPoint: file,
-                    details: "Detected Godot PCK archive by GDPC header (\(file))"
-                )
+            let info = godotPCKInfo(at: fullURL)
+            if info.isPCK {
+                godotCandidates.append((file: file, version: info.versionText, size: info.size))
             }
+        }
+        if !godotCandidates.isEmpty {
+            godotCandidates.sort { $0.size > $1.size }
+            let best = godotCandidates[0]
+            let sizeMB = String(format: "%.1f MB", Double(best.size) / (1024 * 1024))
+            return EngineDetectionResult(
+                engine: .godot,
+                entryPoint: best.file,
+                details: "Detected \(best.version) archive (\(best.file), \(sizeMB))"
+            )
         }
         if let godotSo = allFiles.first(where: { $0.lowercased().contains("libgodot_android.so") }) {
             return EngineDetectionResult(
@@ -202,10 +202,23 @@ public final class EngineDetector {
         )
     }
 
-    private func isGodotPCKFile(at url: URL) -> Bool {
-        guard let handle = try? FileHandle(forReadingFrom: url) else { return false }
+    private func godotPCKInfo(at url: URL) -> (isPCK: Bool, versionText: String, size: Int64) {
+        guard let handle = try? FileHandle(forReadingFrom: url) else { return (false, "", 0) }
         defer { try? handle.close() }
-        let header = handle.readData(ofLength: 4)
-        return header == Data([0x47, 0x44, 0x50, 0x43]) // "GDPC"
+        let header = handle.readData(ofLength: 20)
+        guard header.count >= 4 else { return (false, "", 0) }
+        let isPCK = header.prefix(4) == Data([0x47, 0x44, 0x50, 0x43]) // "GDPC"
+        guard isPCK else { return (false, "", 0) }
+
+        let fileSize = (try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? NSNumber)?.int64Value ?? 0
+
+        if header.count >= 16 {
+            let major = Int(header[8]) | (Int(header[9]) << 8) | (Int(header[10]) << 16) | (Int(header[11]) << 24)
+            let minor = Int(header[12]) | (Int(header[13]) << 8) | (Int(header[14]) << 16) | (Int(header[15]) << 24)
+            if major > 0 {
+                return (true, "Godot \(major).\(minor)", fileSize)
+            }
+        }
+        return (true, "Godot PCK", fileSize)
     }
 }
