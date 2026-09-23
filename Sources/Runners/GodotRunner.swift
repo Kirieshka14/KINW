@@ -355,8 +355,79 @@ public final class GodotViewController: UIViewController, WKScriptMessageHandler
         }
     }
 
+    private func prepareGodotPCK(pckRelativePath: String, in bottleDir: URL) -> [String] {
+        let pckURL = bottleDir.appendingPathComponent(pckRelativePath)
+        guard FileManager.default.fileExists(atPath: pckURL.path) else { return [] }
+
+        // 1. Inspect and patch PCK header if needed
+        if let handle = try? FileHandle(forUpdating: pckURL) {
+            defer { try? handle.close() }
+            let header = handle.readData(ofLength: 40)
+            if header.count >= 24 && header.prefix(4) == Data([0x47, 0x44, 0x50, 0x43]) { // "GDPC"
+                var flags = header.subdata(in: 20..<24).withUnsafeBytes { $0.load(as: UInt32.self) }
+                let isSparse = (flags & 0x04) != 0
+                if isSparse {
+                    let fileSize = (try? pckURL.resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? 0
+                    addLog("[KINW-Godot] Sparse PCK detected (flags=0x\(String(flags, radix: 16)), size=\(fileSize) bytes)")
+
+                    // If archive is large (> 1 MB), it already contains the embedded game data.
+                    // Clear the PACK_SPARSE_BUNDLE bit so Godot 4 Web reads files directly from internal offsets.
+                    if fileSize > 1024 * 1024 {
+                        flags &= ~0x04
+                        do {
+                            if #available(iOS 13.0, *) {
+                                try handle.seek(toOffset: 20)
+                            } else {
+                                handle.seek(toFileOffset: 20)
+                            }
+                            var updatedFlags = flags
+                            let flagData = Data(bytes: &updatedFlags, count: 4)
+                            if #available(iOS 13.4, *) {
+                                try handle.write(contentsOf: flagData)
+                            } else {
+                                handle.write(flagData)
+                            }
+                            addLog("[KINW-Godot] De-sparsed PCK header: cleared PACK_SPARSE_BUNDLE flag (new flags=0x\(String(flags, radix: 16)))")
+                        } catch {
+                            addLog("[KINW-Godot] Warning: failed to patch sparse flag: \(error.localizedDescription)")
+                        }
+                    }
+                }
+            }
+        }
+
+        // 2. Discover critical loose files in bottle directory (e.g. project.binary, project.godot)
+        var looseFiles: [String] = []
+        if let enumerator = FileManager.default.enumerator(at: bottleDir, includingPropertiesForKeys: [.fileSizeKey]) {
+            for case let fileURL as URL in enumerator {
+                guard !fileURL.hasDirectoryPath else { continue }
+                let rel = fileURL.relativePath(from: bottleDir)
+                let ext = fileURL.pathExtension.lowercased()
+                let fileName = fileURL.lastPathComponent.lowercased()
+
+                if ext != "pck" && ext != "sparsepck" && ext != "apk" && ext != "dylib" && ext != "so" && !rel.hasPrefix(".") {
+                    if fileName == "project.binary" || fileName == "project.godot" || ext == "cfb" || ext == "binary" {
+                        looseFiles.append(rel)
+                    }
+                }
+            }
+        }
+
+        if !looseFiles.isEmpty {
+            addLog("[KINW-Godot] Found loose project configs to preload: \(looseFiles.joined(separator: ", "))")
+        }
+
+        return looseFiles
+    }
+
     private func loadGodotRuntime(pckRelativePath: String) {
         addLog("[KINW-Godot] Mounting Godot PCK: \(pckRelativePath)")
+
+        let bottleDir = BottleManager.shared.bottleDirectory(for: bottle.id)
+        let looseFiles = prepareGodotPCK(pckRelativePath: pckRelativePath, in: bottleDir)
+
+        let looseFilesJSONData = (try? JSONSerialization.data(withJSONObject: looseFiles, options: [])) ?? Data("[]".utf8)
+        let looseFilesJSON = String(data: looseFilesJSONData, encoding: .utf8) ?? "[]"
 
         let escapedTitle = bottle.title
             .replacingOccurrences(of: "&", with: "&amp;")
@@ -536,22 +607,41 @@ public final class GodotViewController: UIViewController, WKScriptMessageHandler
 
                 statusText.innerText = "Mounting game archive...";
 
-                engine.startGame({
-                    onProgress: function(current, total) {
-                        if (total > 0) {
-                            const percent = Math.min(100, Math.round((current / total) * 100));
-                            progressFill.style.width = percent + '%';
-                            const currentMB = (current / (1024 * 1024)).toFixed(1);
-                            const totalMB = (total / (1024 * 1024)).toFixed(1);
-                            progressLabel.innerText = currentMB + ' MB / ' + totalMB + ' MB (' + percent + '%)';
-                            if (percent >= 100) {
-                                statusText.innerText = "Starting engine...";
-                            }
-                        } else if (current > 0) {
-                            const currentMB = (current / (1024 * 1024)).toFixed(1);
-                            progressLabel.innerText = currentMB + ' MB loaded';
-                        }
+                const looseFiles = \(looseFilesJSON);
+
+                function preloadLooseFiles() {
+                    if (!looseFiles || looseFiles.length === 0) {
+                        return Promise.resolve();
                     }
+                    statusText.innerText = "Preloading project configs...";
+                    const promises = looseFiles.map(function(filePath) {
+                        const dest = filePath.replace(/^assets\\//, '');
+                        console.log('[KINW-Preload] Preloading loose file:', filePath, '->', dest);
+                        return engine.preloadFile(filePath, dest).catch(function(err) {
+                            console.warn('[KINW-Preload] Warning loading ' + filePath, err);
+                        });
+                    });
+                    return Promise.all(promises);
+                }
+
+                preloadLooseFiles().then(function() {
+                    return engine.startGame({
+                        onProgress: function(current, total) {
+                            if (total > 0) {
+                                const percent = Math.min(100, Math.round((current / total) * 100));
+                                progressFill.style.width = percent + '%';
+                                const currentMB = (current / (1024 * 1024)).toFixed(1);
+                                const totalMB = (total / (1024 * 1024)).toFixed(1);
+                                progressLabel.innerText = currentMB + ' MB / ' + totalMB + ' MB (' + percent + '%)';
+                                if (percent >= 100) {
+                                    statusText.innerText = "Starting engine...";
+                                }
+                            } else if (current > 0) {
+                                const currentMB = (current / (1024 * 1024)).toFixed(1);
+                                progressLabel.innerText = currentMB + ' MB loaded';
+                            }
+                        }
+                    });
                 }).then(function() {
                     statusText.innerText = "Game started!";
                     setTimeout(function() {
@@ -701,11 +791,18 @@ public final class GodotViewController: UIViewController, WKScriptMessageHandler
             let bottleDir = BottleManager.shared.bottleDirectory(for: bottle.id)
             let target = bottleDir.appendingPathComponent(cleanPath)
             let resolved = bottleDir.resolvingSymlinksInPath().appendingPathComponent(cleanPath)
+            let assetsTarget = bottleDir.appendingPathComponent("assets").appendingPathComponent(cleanPath)
+            let strippedCleanPath = cleanPath.hasPrefix("assets/") ? String(cleanPath.dropFirst(7)) : cleanPath
+            let strippedTarget = bottleDir.appendingPathComponent(strippedCleanPath)
 
             if FileManager.default.fileExists(atPath: target.path) {
                 matchedURL = target
             } else if FileManager.default.fileExists(atPath: resolved.path) {
                 matchedURL = resolved
+            } else if FileManager.default.fileExists(atPath: assetsTarget.path) {
+                matchedURL = assetsTarget
+            } else if FileManager.default.fileExists(atPath: strippedTarget.path) {
+                matchedURL = strippedTarget
             }
         }
 
