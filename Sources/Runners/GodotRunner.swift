@@ -119,18 +119,12 @@ public final class GodotViewController: UIViewController, WKScriptMessageHandler
                 }
             } catch(e) {}
 
-            // Safe WebAssembly streaming instantiation fallback
-            if (window.WebAssembly && window.WebAssembly.instantiateStreaming) {
-                var origInstantiate = window.WebAssembly.instantiateStreaming;
+            // Safe WebAssembly instantiation (bypass buggy WebKit streaming on custom schemes)
+            if (window.WebAssembly) {
                 window.WebAssembly.instantiateStreaming = function(source, imports) {
-                    return Promise.resolve(source).then(function(res) {
-                        return origInstantiate(res, imports).catch(function(err) {
-                            console.warn('[KINW-Wasm] instantiateStreaming failed, falling back to arrayBuffer:', err);
-                            return res.arrayBuffer().then(function(bytes) {
-                                return WebAssembly.instantiate(bytes, imports);
-                            });
-                        });
-                    });
+                    return Promise.resolve(source)
+                        .then(function(res) { return res.arrayBuffer(); })
+                        .then(function(bytes) { return WebAssembly.instantiate(bytes, imports); });
                 };
             }
 
@@ -1006,8 +1000,8 @@ public final class GodotViewController: UIViewController, WKScriptMessageHandler
             return
         }
 
-        // Small files (< 2 MB): read and send synchronously
-        if contentLength <= 2 * 1024 * 1024 {
+        // Send wasm (38 MB) and all files <= 50 MB in one shot without chunking
+        if ext == "wasm" || contentLength <= 50 * 1024 * 1024 {
             if let handle = try? FileHandle(forReadingFrom: fileURL) {
                 defer { try? handle.close() }
                 if rangeStart > 0 {
@@ -1140,7 +1134,12 @@ public final class GodotViewController: UIViewController, WKScriptMessageHandler
     }
 
     private func showError(_ message: String) {
-        let alert = UIAlertController(title: "KINW Godot Error", message: message, preferredStyle: .alert)
+        var fullMsg = message
+        if !capturedLogs.isEmpty {
+            let recent = capturedLogs.suffix(6).joined(separator: "\n")
+            fullMsg += "\n\nLogs:\n" + recent
+        }
+        let alert = UIAlertController(title: "KINW Godot Error", message: fullMsg, preferredStyle: .alert)
         alert.addAction(UIAlertAction(title: "OK", style: .default, handler: { [weak self] _ in
             self?.dismiss(animated: true)
         }))
