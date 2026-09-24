@@ -142,6 +142,13 @@ public final class GodotViewController: UIViewController, WKScriptMessageHandler
                 } catch(err) {}
             });
 
+            window.addEventListener('unhandledrejection', function(e) {
+                try {
+                    var reason = e.reason ? (e.reason.stack || e.reason.message || String(e.reason)) : 'Unhandled rejection';
+                    window.webkit.messageHandlers.kinwLog.postMessage('[JS-REJECT] ' + reason);
+                } catch(err) {}
+            });
+
             var oldErr = console.error;
             console.error = function() {
                 try {
@@ -438,6 +445,11 @@ public final class GodotViewController: UIViewController, WKScriptMessageHandler
             return []
         }
 
+        if pckRelativePath == "game.pck" {
+            // game.pck is already a fully assembled monolithic archive with all project configs and cache embedded
+            return []
+        }
+
         let pckURL = bottleDir.appendingPathComponent(pckRelativePath)
         guard FileManager.default.fileExists(atPath: pckURL.path) else { return [] }
 
@@ -672,6 +684,11 @@ public final class GodotViewController: UIViewController, WKScriptMessageHandler
                     statusError.innerText = (err && err.message) ? err.message : String(err);
                 }
 
+                window.addEventListener('unhandledrejection', function(event) {
+                    console.error('[UNHANDLED-PROMISE-REJECTION]', event.reason);
+                    showError(event.reason);
+                });
+
                 const canvasEl = document.getElementById('canvas');
 
                 const GODOT_CONFIG = {
@@ -682,7 +699,15 @@ public final class GodotViewController: UIViewController, WKScriptMessageHandler
                     experimentalVK: false,
                     focusCanvas: true,
                     gdextensionLibs: [],
-                    mainPack: "\(pckRelativePath)"
+                    mainPack: "\(pckRelativePath)",
+                    onPrint: function() {
+                        var msg = Array.prototype.slice.call(arguments).map(String).join(' ');
+                        console.log('[Godot]', msg);
+                    },
+                    onPrintError: function() {
+                        var msg = Array.prototype.slice.call(arguments).map(String).join(' ');
+                        console.error('[Godot-Err]', msg);
+                    }
                 };
 
                 const engine = new Engine(GODOT_CONFIG);
@@ -801,6 +826,13 @@ public final class GodotViewController: UIViewController, WKScriptMessageHandler
 
     public func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         addLog("[NAV] Page loaded successfully")
+    }
+
+    public func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+        addLog("[WEBKIT-CRASH] Web content process terminated (Out of memory Jetsam or WebKit crash)!")
+        DispatchQueue.main.async { [weak self] in
+            self?.showError("Game web process terminated unexpectedly (WebKit OOM / Crash). Please reload.")
+        }
     }
 
     // MARK: - WKURLSchemeHandler Task Tracking
@@ -995,66 +1027,88 @@ public final class GodotViewController: UIViewController, WKScriptMessageHandler
             return
         }
 
-        // Large files (e.g. 35 MB Wasm, 539 MB PCK): stream in 2 MB chunks on background queue
+        // Large files (e.g. 35 MB Wasm, 539 MB PCK): stream in 2 MB chunks without blocking UI or violating WebKit main-thread invariants
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             guard let self = self else { return }
             guard let handle = try? FileHandle(forReadingFrom: fileURL) else {
-                if self.isTaskActive(urlSchemeTask) {
-                    urlSchemeTask.didFailWithError(URLError(.cannotOpenFile))
+                DispatchQueue.main.async {
+                    if self.isTaskActive(urlSchemeTask) {
+                        urlSchemeTask.didFailWithError(URLError(.cannotOpenFile))
+                    }
+                    self.markTaskFinished(urlSchemeTask)
                 }
-                self.markTaskFinished(urlSchemeTask)
                 return
             }
-            defer { try? handle.close() }
 
             if rangeStart > 0 {
                 do {
                     try handle.seek(toOffset: UInt64(rangeStart))
                 } catch {
-                    if self.isTaskActive(urlSchemeTask) {
-                        urlSchemeTask.didFailWithError(URLError(.cannotOpenFile))
+                    try? handle.close()
+                    DispatchQueue.main.async {
+                        if self.isTaskActive(urlSchemeTask) {
+                            urlSchemeTask.didFailWithError(URLError(.cannotOpenFile))
+                        }
+                        self.markTaskFinished(urlSchemeTask)
                     }
-                    self.markTaskFinished(urlSchemeTask)
                     return
                 }
             }
 
             let chunkSize = 2 * 1024 * 1024
             var remaining = contentLength
-            var hasError = false
 
-            while remaining > 0 && self.isTaskActive(urlSchemeTask) {
-                let toRead = Int(min(Int64(chunkSize), remaining))
-                let chunk: Data
-                do {
-                    if #available(iOS 13.4, *) {
-                        guard let data = try handle.read(upToCount: toRead), !data.isEmpty else {
-                            break
-                        }
-                        chunk = data
-                    } else {
-                        let data = handle.readData(ofLength: toRead)
-                        if data.isEmpty { break }
-                        chunk = data
-                    }
-                } catch {
-                    hasError = true
-                    break
+            func sendNextChunk() {
+                guard self.isTaskActive(urlSchemeTask) else {
+                    try? handle.close()
+                    return
                 }
 
-                guard self.isTaskActive(urlSchemeTask) else { break }
-                urlSchemeTask.didReceive(chunk)
-                remaining -= Int64(chunk.count)
+                if remaining <= 0 {
+                    try? handle.close()
+                    DispatchQueue.main.async {
+                        guard self.isTaskActive(urlSchemeTask) else { return }
+                        urlSchemeTask.didFinish()
+                        self.markTaskFinished(urlSchemeTask)
+                    }
+                    return
+                }
+
+                let toRead = Int(min(Int64(chunkSize), remaining))
+                let chunk: Data?
+                if #available(iOS 13.4, *) {
+                    chunk = (try? handle.read(upToCount: toRead))
+                } else {
+                    chunk = handle.readData(ofLength: toRead)
+                }
+
+                guard let data = chunk, !data.isEmpty else {
+                    try? handle.close()
+                    DispatchQueue.main.async {
+                        guard self.isTaskActive(urlSchemeTask) else { return }
+                        urlSchemeTask.didFinish()
+                        self.markTaskFinished(urlSchemeTask)
+                    }
+                    return
+                }
+
+                remaining -= Int64(data.count)
+
+                DispatchQueue.main.async {
+                    guard self.isTaskActive(urlSchemeTask) else {
+                        try? handle.close()
+                        return
+                    }
+                    urlSchemeTask.didReceive(data)
+
+                    // Dispatch next read to background queue to pace the stream without blocking main queue
+                    DispatchQueue.global(qos: .userInitiated).async {
+                        sendNextChunk()
+                    }
+                }
             }
 
-            guard self.isTaskActive(urlSchemeTask) else { return }
-
-            if hasError {
-                urlSchemeTask.didFailWithError(URLError(.cannotDecodeRawData))
-            } else {
-                urlSchemeTask.didFinish()
-            }
-            self.markTaskFinished(urlSchemeTask)
+            sendNextChunk()
         }
     }
 
